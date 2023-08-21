@@ -4,7 +4,7 @@
     <TargetFramework>net7.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="Downloads.fs" />
+    <Compile Include="Artifacts.fs" />
     <Compile Include="Downloader.fs" />
     <Compile Include="Views.fs" />
     <Compile Include="Program.fs" />

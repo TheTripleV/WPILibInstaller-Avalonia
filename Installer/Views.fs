@@ -146,10 +146,11 @@ module Views =
         )
 
 
-    type ButtonState =
-        | Downloading of DownloadProgress
-        | Downloaded
-        | NotDownloaded
+    // type ButtonState =
+    //     | NotDownloaded
+    //     | Downloading of DownloadProgress
+    //     | Downloaded
+    //     | Failed of DownloadProgress
 
 
     let customDownloadView () =
@@ -157,10 +158,10 @@ module Views =
         let mutable skip: Set<Package*Platform> = Set []
         let columnPlatforms (pack: Package) (plat_idx: int) =
             let plat = Platform.all.[plat_idx]
-            let curr = Downloads.downloads.TryFind (pack, plat)
+            let curr = Artifacts.artifacts.TryFind (pack, plat)
             Seq.takeWhile
                 (fun (next) ->
-                    match (curr, Downloads.downloads.TryFind (pack, next)) with
+                    match (curr, Artifacts.artifacts.TryFind (pack, next)) with
                     | (None, None) -> true
                     | (Some x, Some y) -> x.Url = y.Url
                     | _ -> false)
@@ -248,7 +249,7 @@ module Views =
                             else
                                 let column_plats = columnPlatforms pack plat_idx
                                 let column_span = column_plats |> Seq.length
-                                match Downloads.downloads.TryFind (pack, plat) with
+                                match Artifacts.artifacts.TryFind (pack, plat) with
                                 | None -> 
                                     Rectangle.create [
                                         //
@@ -271,45 +272,71 @@ module Views =
                                                     ctx2.useStateLazy <|
                                                         fun _ -> 
                                                             match Downloader.downloadExistsAndValid download with
-                                                            | true -> Downloaded
-                                                            | false -> NotDownloaded
+                                                            | true -> DownloadStatus.Finished
+                                                            | false -> DownloadStatus.NotStarted
                                                 Button.create [
                                                     match button_state.Current with
-                                                        | Downloaded -> "✔"
-                                                        | NotDownloaded -> "⬇"
-                                                        | Downloading progress -> $"{progress.ProgressPercentage:F2}%%"
+                                                        | DownloadStatus.NotStarted -> "⬇"
+                                                        | DownloadStatus.InProgress progress -> $"{progress.ProgressPercentage:F2}%%"
+                                                        | DownloadStatus.Finished -> "✔"
+                                                        | DownloadStatus.Failed _ -> "❌"
                                                     |> Button.content
 
                                                     Button.onClick
                                                         (fun _ ->
 
                                                             match button_state.Current with
-                                                            | Downloading _ -> ()
+                                                            | DownloadStatus.InProgress _ -> ()
                                                             | _ ->
-                                                                // printfn "Downloading %A" download
-                                                                // printfn "%A" <| Downloader.packageDir download
-                                                                Downloader.startDownloading download (
-                                                                    fun progress ->
-                                                                        if progress.TotalBytesDownloaded = progress.TotalFileSize then
-                                                                            button_state.Set (Downloaded)
-                                                                        else
-                                                                            button_state.Set (Downloading progress)
-                                                                    )
+                                                                Downloader.startDownloading download button_state.Set
+                                                                |> ignore
                                                         )
+                                                    
+                                                    ContextMenu.create [
+                                                        ContextMenu.viewItems [
+                                                            SelectableTextBlock.create [
+                                                                match button_state.Current with
+                                                                    | DownloadStatus.Failed (_, err) ->
+                                                                        "Download Failed:\n"
+                                                                        + "Download Info:\n"
+                                                                        + download.ToString() + "\n"
+                                                                        + "\n\n"
+                                                                        + "Error:\n"
+                                                                        + err
+                                                                    | _ -> ""
+                                                                |>
+                                                                TextBlock.text
+                                                            ]
+                                                        ]
+
+                                                    ]
+                                                    |> Button.contextMenu
 
                                                     match button_state.Current with
-                                                        | NotDownloaded -> $"""Download {pack} for {column_plats |> Seq.map string |> String.concat " | "}"""
-                                                        | Downloaded -> $"""Re-download {pack} for {column_plats |> Seq.map string |> String.concat " | "}"""
-                                                        | Downloading progress -> $"""Downloading {pack} | {progress.TotalBytesDownloaded / int64 1e6} / {progress.TotalFileSize / int64 1e6} MB | {progress.AvgMbps:F2} Mbps"""
-                                                    |> ToolTip.tip
+                                                        | DownloadStatus.NotStarted -> $"""Download {pack} for {column_plats |> Seq.map string |> String.concat " | "}"""
+                                                        | DownloadStatus.InProgress progress -> $"""Downloading {pack} | {progress.TotalBytesDownloaded / int64 1e6} / {progress.TotalFileSize / int64 1e6} MB | {progress.AvgMbps:F2} Mbps"""
+                                                        | DownloadStatus.Finished -> $"""Re-download {pack} for {column_plats |> Seq.map string |> String.concat " | "}"""
+                                                        | DownloadStatus.Failed (progress, err) ->
+                                                            printfn "--- Download Failed ---"
+                                                            printfn "%A" download
+                                                            printfn "%A" progress
+                                                            printfn "%s" err
+                                                            printfn "-----------------------"
+                                                            err.[0..150] + "\n\n" + "right click button for full error" 
+                                                    |>
+                                                    ToolTip.tip
 
                                                     Button.init (fun button ->
-                                                        let clickIfNotDownloaded () = 
-                                                            if button_state.Current <> Downloaded then
-                                                                button.RaiseEvent (RoutedEventArgs (Button.ClickEvent, button))
+                                                        let clickIfNotDownloaded () =
+                                                            match button_state.Current with
+                                                                | DownloadStatus.NotStarted
+                                                                | DownloadStatus.Failed _ -> button.RaiseEvent (RoutedEventArgs (Button.ClickEvent, button))
+                                                                | _ -> ()
+
                                                         downloadFuns4Everything <- clickIfNotDownloaded::downloadFuns4Everything
-                                                        downloadFuns4Platform <- downloadFuns4Platform.Add (plat, clickIfNotDownloaded :: downloadFuns4Platform.[plat])
                                                         downloadFuns4Package <- downloadFuns4Package.Add (pack, clickIfNotDownloaded :: downloadFuns4Package.[pack])
+                                                        for plat in column_plats do
+                                                            downloadFuns4Platform <- downloadFuns4Platform.Add (plat, clickIfNotDownloaded :: downloadFuns4Platform.[plat])
                                                     )
 
                                                     Button.verticalAlignment VerticalAlignment.Stretch
