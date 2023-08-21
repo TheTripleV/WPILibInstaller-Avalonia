@@ -1,0 +1,227 @@
+evaluationDependsOn(':gradleriobase')
+
+def otherDeps = []
+
+apply plugin: 'de.undercouch.download'
+
+configurations {
+  offline
+  tools
+  cppTools
+  documentationJava
+  documentationCpp
+  runtimex64
+}
+
+def toolArtifacts = [
+  'edu.wpi.first.tools:Shuffleboard',
+  'edu.wpi.first.tools:RobotBuilder',
+  'edu.wpi.first.tools:PathWeaver',
+  'edu.wpi.first.tools:SmartDashboard'
+]
+
+def cppToolsArtifacts = [
+  'edu.wpi.first.tools:Glass',
+  'edu.wpi.first.tools:OutlineViewer',
+  'edu.wpi.first.tools:roboRIOTeamNumberSetter',
+  'edu.wpi.first.tools:DataLogTool',
+  'edu.wpi.first.tools:SysId'
+]
+
+def skipMacArmTools = [
+  'edu.wpi.first.tools:SmartDashboard'
+]
+
+def skipTools = []
+
+dependencies {
+    documentationCpp "edu.wpi.first.wpilibc:documentation:${project(':gradleriobase').wpi.versions.wpilibVersion.get()}@zip"
+    documentationJava "edu.wpi.first.wpilibj:documentation:${project(':gradleriobase').wpi.versions.wpilibVersion.get()}@zip"
+    if (project.ext.buildClassifier == 'Windows') {
+        runtimex64 "edu.wpi.first.msvc:runtime:${project(':gradleriobase').wpi.versions.wpilibVersion.get()}:x64@zip"
+    }
+}
+
+def lazyEvaluator = tasks.register('lazyModelEvaluation') {
+
+  dependsOn ':gradleriobase:build'
+  doLast {
+    def gradleRioDeps = project(':gradleriobase').getGradleRioDependencies()
+    dependencies {
+      gradleRioDeps.deps.each { dep->
+        def foundTool = false
+
+        skipTools.each { tool->
+          if ("$dep.groupId:$dep.artifactId" == tool) {
+            def depString = "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+            println "Skipping " + depString
+            foundTool = true
+            return
+          }
+        }
+
+        if (foundTool) {
+          return
+        }
+
+        if (project.hasProperty('macBuildArm')) {
+          skipMacArmTools.each { tool->
+            if ("$dep.groupId:$dep.artifactId" == tool) {
+              def depString = "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+              println "Skipping because arm " + depString
+              foundTool = true
+              return
+            }
+          }
+        }
+
+        if (foundTool) {
+          return
+        }
+
+        cppToolsArtifacts.each { tool->
+          if ("$dep.groupId:$dep.artifactId" == tool) {
+            def depString = "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+            cppTools depString
+            println depString
+            foundTool = true
+            return
+          }
+        }
+
+        if (foundTool) {
+          return
+        }
+
+        toolArtifacts.each { tool->
+          if ("$dep.groupId:$dep.artifactId" == tool) {
+            if (dep.classifier == null) {
+              def depString = "$dep.groupId:$dep.artifactId:$dep.version:@$dep.extension"
+              tools depString
+              println depString
+              foundTool = true
+              return
+            } else {
+              if (dep.classifier != 'sources' && dep.classifier != 'javadoc') {
+                def depString = "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+                tools depString
+                println depString
+                foundTool = true
+                return
+              }
+            }
+          }
+        }
+
+        if (foundTool) {
+          return
+        }
+
+        println dep
+        if (dep.classifier == null) {
+         offline "$dep.groupId:$dep.artifactId:$dep.version:@$dep.extension"
+        } else if (dep.classifier.startsWith(project.ext.forcePlatform)) {
+          offline "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+        } else if (dep.classifier.contains('athena')) {
+         offline "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+        } else if (dep.classifier.contains('headers')) {
+         offline "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+        } else if (dep.classifier.contains('sources')) {
+         offline "$dep.groupId:$dep.artifactId:$dep.version:$dep.classifier@$dep.extension"
+        }
+      }
+    }
+  }
+}
+repositories {
+    project(':gradleriobase').getGradleRioUrls().each { gUrl->
+      maven {
+        url = gUrl
+      }
+    }
+    maven {
+      name 'artifactory'
+      url 'https://frcmaven.wpi.edu/artifactory/plugins'
+    }
+}
+
+def cleanoffline = tasks.register("cleanOfflineRepository", Delete) {
+  delete offlineRepositoryRoot
+}
+
+updateOfflineRepository.dependsOn cleanoffline
+updateOfflineRepository.dependsOn lazyEvaluator
+
+offlineDependencies {
+  repositories {
+    // You'll have to add your buildscript repositories here too
+    project(':gradleriobase').getGradleRioUrls().each { gUrl->
+      maven {
+        url = gUrl
+      }
+    }
+    maven {
+      name 'artifactory'
+      url 'https://frcmaven.wpi.edu/artifactory/plugins'
+    }
+  }
+
+  configurations 'offline'
+
+  includeSources = true
+  includeJavadocs = true
+  includePoms = true
+  includeIvyXmls = true
+}
+
+ext.mavenConfigSetup = {
+  return new Tuple2({ task->
+  }, { config->
+    config['Maven'] = [:]
+    config['Maven']['Folder'] = 'maven'
+    config['Maven']['MetaDataFixerJar'] = 'MavenMetaDataFixer.jar'
+  })
+}
+
+def downloadNewCommands = tasks.register('downloadNewCommands', Download) {
+  src 'https://raw.githubusercontent.com/wpilibsuite/allwpilib/master/wpilibNewCommands/WPILibNewCommands.json'
+  def fileName = file(src.file).name
+  dest "$buildDir/downloads/$fileName"
+  overwrite false
+}
+
+ext.mavenZipSetup = { AbstractArchiveTask zip->
+  zip.dependsOn updateOfflineRepository
+  zip.inputs.dir offlineRepositoryRoot
+  zip.from(fileTree(offlineRepositoryRoot)) {
+    into '/maven'
+  }
+
+  zip.dependsOn downloadNewCommands
+
+  zip.from(downloadNewCommands.get().outputFiles.first()) {
+    into '/vendordeps'
+  }
+
+  zip.from(project.zipTree(configurations.documentationCpp.resolvedConfiguration.resolvedArtifacts.first().file)) {
+    into '/documentation/cpp'
+  }
+  zip.from(project.zipTree(configurations.documentationJava.resolvedConfiguration.resolvedArtifacts.first().file)) {
+    into '/documentation/java'
+  }
+
+  zip.from(configurations.cppTools) {
+    into '/tools/artifacts'
+  }
+
+  zip.from(configurations.tools) {
+    into '/tools/artifacts'
+  }
+
+  if (project.ext.buildClassifier == 'Windows') {
+    zip.from(project.zipTree(configurations.runtimex64.resolvedConfiguration.resolvedArtifacts.first().file)) {
+      into '/tools'
+    }
+  }
+
+}

@@ -1,0 +1,11 @@
+
+ext.wpilibVersion = gradleRioVersion
+
+ext.gccVersion = '12.1.0'
+ext.toolchainGitTag = 'v2023-7'
+
+ext.jdkVersion = '17.0.5+8'
+
+ext.frcYear = '2023'
+
+ext.gradleWrapperVersion = '7.5.1'
