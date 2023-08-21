@@ -365,3 +365,5 @@ build/
 offline-repository/
 buildSrc/libs
 .vscode/
+
+WPILibInstallerDownloader
